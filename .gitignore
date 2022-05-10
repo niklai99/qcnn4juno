@@ -1,5 +1,6 @@
 # Data folters
 data/
+slides*/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
