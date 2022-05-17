@@ -34,12 +34,12 @@ def visualize_events(
     coef = lambda boolean: 2 if boolean else 1
 
     theta = np.linspace(0,2*np.pi,100)
-    phi = np.linspace(0,np.pi,100)
-    x = np.outer(np.cos(theta),np.sin(phi))
-    y = np.outer(np.sin(theta),np.sin(phi))
-    z = np.outer(np.ones(100),np.cos(phi))
+    phi   = np.linspace(0,np.pi,100)
+    x     = np.outer(np.cos(theta),np.sin(phi))
+    y     = np.outer(np.sin(theta),np.sin(phi))
+    z     = np.outer(np.ones(100),np.cos(phi))
 
-#     fig = go.Figure()
+
     if subplots:
         fig = make_subplots(
             rows=1, cols=2, column_widths=[0.5, 0.5],
@@ -47,7 +47,7 @@ def visualize_events(
         )
     else:
         fig = go.Figure()
-        
+
     if cc_show:
         x_cc = np.zeros(len(evtIDs))
         y_cc = np.zeros(len(evtIDs))
@@ -57,7 +57,7 @@ def visualize_events(
             x_cc[i] = np.sum(lpmt_x_array[i] * lpmt_s_array[i]) / np.sum(lpmt_s_array[i])
             y_cc[i] = np.sum(lpmt_y_array[i] * lpmt_s_array[i]) / np.sum(lpmt_s_array[i])
             z_cc[i] = np.sum(lpmt_z_array[i] * lpmt_s_array[i]) / np.sum(lpmt_s_array[i])
-            
+
         R_cc = (x_cc**2 + y_cc**2 + z_cc**2)**0.5
 
     if cht_show:
@@ -70,14 +70,15 @@ def visualize_events(
             x_cht[i] = np.sum(lpmt_x_array[i] / (lpmt_fht_array[i] + eps)) / np.sum(1 / (lpmt_fht_array[i] + eps))
             y_cht[i] = np.sum(lpmt_y_array[i] / (lpmt_fht_array[i] + eps)) / np.sum(1 / (lpmt_fht_array[i] + eps))
             z_cht[i] = np.sum(lpmt_z_array[i] / (lpmt_fht_array[i] + eps)) / np.sum(1 / (lpmt_fht_array[i] + eps))
-        
+
         R_cht = (x_cht**2 + y_cht**2 + z_cht**2)**0.5
 
 
     for i in range(len(evtIDs)):
         list1 = list(lpmt_s_array[i].round(2))
         list2 = list(lpmt_fht_array[i].round(2))
-        str1 = ', '.join("nPE: " + str(list1[i]) + " FHT: " + str(list2[i]) for i in range(len(list1)))
+        str1 = ', '.join(f"nPE: {str(list1[i])} FHT: {str(list2[i])}" for i in range(len(list1)))
+
         scatter_text = str1.split(", ")
         trace = lambda type_of_vis_obj, colorscale, name:\
                                  go.Scatter3d(
@@ -111,13 +112,13 @@ def visualize_events(
                                                 opacity=1),
                                     name='Edep = ' + str(event_edep_array[i])[:5] + " MeV",
                                     showlegend=legend)
-        
+
         if subplots:
             fig.add_trace(trace(True), row=1, col=1)
             fig.add_trace(trace(False), row=1, col=2)
         else:
             fig.add_trace(trace(True))
-            
+
     if cc_show:
         for i in range(len(evtIDs)):
             trace = lambda legend: go.Scatter3d(
@@ -140,7 +141,7 @@ def visualize_events(
                 fig.add_trace(trace(False), row=1, col=2)
             else:
                 fig.add_trace(trace(True))
-    
+
     if cht_show:
         for i in range(len(evtIDs)):
             trace = lambda legend: go.Scatter3d(
@@ -174,42 +175,18 @@ def visualize_events(
                     showscale=False,
                     colorscale=['rgb(2, 2, 2)', 'rgb(4, 4, 4)'],
                     name='')
-        
+
         if subplots:
             fig.add_trace(trace, row=1, col=1)
             fig.add_trace(trace, row=1, col=2)
         else:
             fig.add_trace(trace)
 
-    buttons = []
     k = coef(subplots)
-    for N in range(0, len(evtIDs)): 
-        buttons.append(
-          dict(
-              args=['visible', [False]*k*N + k*[True] + [False]*k*(len(evtIDs) - 1 - N)],
-              label='EvtID = {}'.format(evtIDs[N]),
-              method='restyle'
-            )
-        )            
+    buttons = [dict(args=['visible', [False] * k * N + k * [True] + [False] * k * (len(evtIDs) - 1 - N)], label=f'EvtID = {evtIDs[N]}', method='restyle') for N in range(len(evtIDs))]
 
-    fig.update_layout(
-      updatemenus=list([
-        dict(
-          x=0.05,
-          y=1.1,
-          yanchor='top',
-          buttons=buttons
-        ),
-      ]),
-    legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.05,
-        xanchor="right",
-        x=1
-        )
-#       scene_camera_eye=dict(x=1, y=1, z=1)
-    )
+    fig.update_layout(updatemenus=[dict(x=0.05, y=1.1, yanchor='top', buttons=buttons)], legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1))
+
 
     fig.show()
     if save:
