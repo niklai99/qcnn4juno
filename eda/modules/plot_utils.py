@@ -33,7 +33,7 @@ def plot_feature_correlation(
     fig, 
     sub_id = 111,
     color  = "#7eb0d5",
-    size   = 20
+    size   = 20,
 ):
 
     ax = fig.add_subplot(sub_id)
@@ -43,6 +43,29 @@ def plot_feature_correlation(
         y     = y,
         color = color,
         s     = size
+    )
+    
+    return ax
+
+
+
+
+def plot_feature_correlation_hue(
+    x,
+    y,
+    fig, 
+    sub_id = 111,
+    size   = 20,
+    c      = None
+):
+
+    ax = fig.add_subplot(sub_id)
+    
+    ax.scatter(
+        x     = x,
+        y     = y,
+        s     = size,
+        c     = c
     )
     
     return ax
