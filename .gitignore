@@ -2,6 +2,9 @@
 data/
 slides*/
 papers/
+juno_ml-Deepshpere/
+Deepshpere_v*/
+deepsphere/
 
 #
 .DS_Store
