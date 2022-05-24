@@ -16,6 +16,13 @@ def plane_mapping(data: pd.DataFrame):
     df.rename({"level_1":"row"}, axis=1, inplace=True)
     df["id"] = df.index
     
+    df["row"] = (
+        df
+            .groupby("col")["row"]
+            .apply(lambda x: x-0.5*x.max()+115)
+            .astype(int)
+    )
+    
     return df
 
 
