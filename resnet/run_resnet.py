@@ -8,6 +8,7 @@ from keras.layers import Dense, Dropout, Flatten, Conv2D, Input, Add, \
                          AveragePooling2D, MaxPooling2D, GlobalMaxPooling2D
 from keras.models import Model
 from keras.initializers import glorot_uniform
+from keras import backend as K
 
 import datetime
 
@@ -15,6 +16,41 @@ import datetime
 physical_devices = tf.config.list_physical_devices("GPU")
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
+"""
+Define costum loss
+"""
+def mean_L2_loss(y_pred, y_true):
+    """
+    Mean L2-norm regression loss
+    
+    Parameters
+    ----------
+    y_true : array-like of shape = (n_samples, vec_dim)
+    y_pred : array-like of shape = (n_samples, vec_dim)
+    Returns
+    -------
+    Loss : A positive floating point value, the best value is 0.0.
+    """
+    d = y_pred - y_true
+    return tf.reduce_mean(tf.norm(d, axis=1))
+
+"""
+Define costum metric
+"""
+def rmse(y_pred, y_true):
+    """
+    Root-mean-square-error metrics
+    
+    Parameters
+    ----------
+    y_true : array-like of shape = (n_samples, vec_dim)
+    y_pred : array-like of shape = (n_samples, vec_dim)
+    Returns
+    -------
+    Metrics : A positive floating point value, the best value is 0.0.
+    """
+    d = y_pred - y_true
+    return K.sqrt(K.mean(K.square(tf.norm(d, axis=1))))
 
 """
 First of all we define the two kind of blocks of the ResNet as functions.
@@ -170,7 +206,7 @@ def ResNetJ(feature, lr_power=-3.0, lr_decay=0.0, nepochs=15, ndat=5e6, BS=64):
                                                            #                         decay_steps=1), 
                              ,beta_1 = 0.9, beta_2 = 0.999 )
 
-    model.compile(loss="mean_squared_error", optimizer=opt, metrics=['accuracy'])
+    model.compile(loss="mse", optimizer=opt, metrics=[tf.keras.metrics.RootMeanSquaredError()])
     
     return model
 
@@ -200,6 +236,10 @@ print('Reading data...', end='')
 filename  = '../../juno_data/data/projections/proj_raw_data_train_0.npz'
 labelname = '../../juno_data/data/real/train/targets/targets_train_0.csv'
 x_train = np.load(filename, allow_pickle=True)['arr_0']
+
+# nan to zero 
+x_train[np.isnan(x_train)] = 0
+
 y_train = pd.read_csv(labelname)
 y_train = y_train['edep'].to_numpy()
 print(' Done')
@@ -213,16 +253,16 @@ print(res.summary())
 #******TENSORBOARD******#
 date_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 log_dir = "logs/" + date_time
-tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+#tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
 
 #******TRAIN*******#
 print('Training...')
-res.fit(x_train, y_train,
-         batch_size=BATCH_SIZE,
-         epochs=EPOCHS,
-         callbacks=[tensorboard_callback],
-         validation_split=0.3,
-         shuffle=True)
+history = res.fit(x_train, y_train,
+          batch_size=BATCH_SIZE,
+          epochs=EPOCHS,
+          #callbacks=[tensorboard_callback],
+          validation_split=0.3,
+          shuffle=True)
 
 
 #*****SAVE MODEL******#
