@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 import tensorflow.keras as tk
 
@@ -7,6 +8,12 @@ from keras.layers import Dense, Dropout, Flatten, Conv2D, Input, Add, \
                          AveragePooling2D, MaxPooling2D, GlobalMaxPooling2D
 from keras.models import Model
 from keras.initializers import glorot_uniform
+
+import datetime
+
+#*****INITIALIZE GPU****#
+physical_devices = tf.config.list_physical_devices("GPU")
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
 """
@@ -101,7 +108,7 @@ def conv2x(X, stride, filters, block, stage=2):
     return out
 
 
-def ResNetJ(feature, lr_power=-3.0, lr_decay=0.0):
+def ResNetJ(feature, lr_power=-3.0, lr_decay=0.0, nepochs=15, ndat=5e6, BS=64):
     """
     Implementation of the ResNet with architecture:        
     Arguments:
@@ -111,7 +118,7 @@ def ResNetJ(feature, lr_power=-3.0, lr_decay=0.0):
     
     # Define the input as a tensor with shape input_shape
     # X_input = Input(shape=(230,124,2))
-    X_input = Input(shape=(219,122,2))
+    X_input = Input(shape=(230,124,2))
     
     # Stage 1
     X = conv1(X_input, block="conv1")
@@ -157,41 +164,73 @@ def ResNetJ(feature, lr_power=-3.0, lr_decay=0.0):
     
     # Compile model
     learning_rate = 10.0**(lr_power)
-    opt = tk.optimizers.Adam(learning_rate=learning_rate, beta_1 = 0.9, beta_2 = 0.999 )
+    decay_factor = 10**(-5*nepochs*ndat/BS)
+    opt = tk.optimizers.Adam(learning_rate=learning_rate #tk.optimizers.schedules.ExponentialDecay(initial_learning_rate=learning_rate,
+                                                          #                          decay_rate=decay_factor, 
+                                                           #                         decay_steps=1), 
+                             ,beta_1 = 0.9, beta_2 = 0.999 )
 
     model.compile(loss="mean_squared_error", optimizer=opt, metrics=['accuracy'])
     
     return model
 
 from keras.callbacks import LearningRateScheduler
-
-def step_decay_schedule(initial_lr=1e-8, decay_factor=0.75, step_size=10, BS=64, ndat = 5e6):
-    '''
-    Wrapper function to create a LearningRateScheduler with step decay schedule.
-    '''
-    def schedule(epoch):
+'''
+def step_decay_schedule(BS=64, ndat = 5e6, nepochs=15):
+    
+    #Wrapper function to create a LearningRateScheduler with step decay schedule.
+    
+    def schedule(epoch, lr):
         if epoch==1:
             decay_factor = 10**(-3) * BS / ndat
-            lr_sched = initial_lr * decay_factor     #(decay_factor ** np.floor(epoch/step_size))
-            return lr_sched
+            #lr_sched = lr * decay_factor     #(decay_factor ** np.floor(epoch/step_size))
+            return lambda step: decay_factor*step
         else:
-            decay_factor = 0.1
-            lr_sched = tk.optimizers.schedules.ExponentialDecay(initial_learning_rate=10**(-3) )
+            decay_factor = 10**(-5*(nepochs-1)*ndat/BS)
+            lr_sched = tk.optimizers.schedules.ExponentialDecay(initial_learning_rate=lr, decay_rate=decay_factor, decay_steps=1)
             return lr_sched
 #        return initial_lr * (decay_factor ** np.floor(epoch/step_size))
     
     return LearningRateScheduler(schedule)
+'''
 
-lr_sched = step_decay_schedule(initial_lr=1e-4)
 
-res = ResNetJ(feature="energy")
-res.summary()
+#*******READ DATA*******#
+print('Reading data...', end='')
+filename  = '../../juno_data/data/projections/proj_raw_data_train_0.npz'
+labelname = '../../juno_data/data/real/train/targets/targets_train_0.csv'
+x_train = np.load(filename, allow_pickle=True)['arr_0']
+y_train = pd.read_csv(labelname)
+y_train = y_train['edep'].to_numpy()
+print(' Done')
 
+#******DEFINE MODEL******#
 BATCH_SIZE = 64
-EPOCHS = 15
-history = res.fit(x_train, y_train,
+EPOCHS = 40
+res = ResNetJ(feature="energy", BS=BATCH_SIZE, ndat=x_train.shape[0], nepochs=EPOCHS)
+print(res.summary())
+
+#******TENSORBOARD******#
+date_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+log_dir = "logs/" + date_time
+tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+
+#******TRAIN*******#
+print('Training...')
+res.fit(x_train, y_train,
          batch_size=BATCH_SIZE,
          epochs=EPOCHS,
-         callbacks=[lr_sched],
-         validation_data=(x_val, y_val),
+         callbacks=[tensorboard_callback],
+         validation_split=0.3,
          shuffle=True)
+
+
+#*****SAVE MODEL******#
+import pickle
+
+
+# save model weights
+res.save_weights('models/res_weights_' + date_time + '.h5')
+with open('models/res_history_' + date_time + '.pkl', 'wb') as f:
+    pickle.dump(history, f)
+    pickle.dump(res, f)
