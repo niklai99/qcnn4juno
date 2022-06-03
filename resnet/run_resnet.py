@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import math
 import tensorflow as tf
 import tensorflow.keras as tk
 
@@ -11,6 +12,9 @@ from keras.initializers import glorot_uniform
 from keras import backend as K
 
 import datetime
+import pickle
+import glob
+import re
 
 #*****INITIALIZE GPU****#
 physical_devices = tf.config.list_physical_devices("GPU")
@@ -143,8 +147,26 @@ def conv2x(X, stride, filters, block, stage=2):
 
     return out
 
+#******CUSTOM LEARNING RATE******#
+class MyLRSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
-def ResNetJ(feature, lr_power=-3.0, lr_decay=0.0, nepochs=15, ndat=5e6, BS=64):
+  def __init__(self, initial_learning_rate, epochs, steps_per_epoch):
+    self.initial_learning_rate = initial_learning_rate
+    self.steps_per_epoch = steps_per_epoch
+    self.m = initial_learning_rate / steps_per_epoch
+    self.decay_rate = (10**-8 / initial_learning_rate)**(((epochs - 1)*steps_per_epoch)**-1)
+    print('decay_rate:', self.decay_rate)
+
+  def __call__(self, step):
+    result = tf.cond(tf.less(step, self.steps_per_epoch), 
+                   lambda: self.m * (step+1),
+                   lambda: self.initial_learning_rate * self.decay_rate**(step+1-self.steps_per_epoch))
+
+    tf.print('lr at step', step, 'is', result, output_stream='file://learning_rates.txt')
+    return result  
+
+
+def ResNetJ(feature, epochs, steps_per_epoch, lr_power=-3.0):
     """
     Implementation of the ResNet with architecture:        
     Arguments:
@@ -200,77 +222,72 @@ def ResNetJ(feature, lr_power=-3.0, lr_decay=0.0, nepochs=15, ndat=5e6, BS=64):
     
     # Compile model
     learning_rate = 10.0**(lr_power)
-    decay_factor = 10**(-5*nepochs*ndat/BS)
-    opt = tk.optimizers.Adam(learning_rate=learning_rate #tk.optimizers.schedules.ExponentialDecay(initial_learning_rate=learning_rate,
-                                                          #                          decay_rate=decay_factor, 
-                                                           #                         decay_steps=1), 
-                             ,beta_1 = 0.9, beta_2 = 0.999 )
+    
+    opt = tk.optimizers.Adam(learning_rate=MyLRSchedule(learning_rate, epochs, steps_per_epoch),
+                             beta_1 = 0.9, beta_2 = 0.999 )
 
     model.compile(loss="mse", optimizer=opt, metrics=[tf.keras.metrics.RootMeanSquaredError()])
     
     return model
 
-from keras.callbacks import LearningRateScheduler
-'''
-def step_decay_schedule(BS=64, ndat = 5e6, nepochs=15):
-    
-    #Wrapper function to create a LearningRateScheduler with step decay schedule.
-    
-    def schedule(epoch, lr):
-        if epoch==1:
-            decay_factor = 10**(-3) * BS / ndat
-            #lr_sched = lr * decay_factor     #(decay_factor ** np.floor(epoch/step_size))
-            return lambda step: decay_factor*step
-        else:
-            decay_factor = 10**(-5*(nepochs-1)*ndat/BS)
-            lr_sched = tk.optimizers.schedules.ExponentialDecay(initial_learning_rate=lr, decay_rate=decay_factor, decay_steps=1)
-            return lr_sched
-#        return initial_lr * (decay_factor ** np.floor(epoch/step_size))
-    
-    return LearningRateScheduler(schedule)
-'''
 
+
+BATCH_SIZE = 64
+EPOCHS = 15
 
 #*******READ DATA*******#
-print('Reading data...', end='')
-filename  = '../../juno_data/data/projections/proj_raw_data_train_0.npz'
-labelname = '../../juno_data/data/real/train/targets/targets_train_0.csv'
-x_train = np.load(filename, allow_pickle=True)['arr_0']
+ntrainfiles = 1
 
-# nan to zero 
-x_train[np.isnan(x_train)] = 0
+filelist = glob.glob('../../juno_data/data/projections/*.npz')
+filelist = filelist[:ntrainfiles]
+print(f'Creating tf.data.Dataset object reading {ntrainfiles} files...')
+def get_data_from_filename(filename):
+   labelfile = '../../juno_data/data/real/train/targets/targets_train_{}.csv'.format(re.findall('\d+', filename.decode())[0])
+   labeldata = pd.read_csv(labelfile)
+   labeldata = labeldata['edep'].to_numpy()
 
-y_train = pd.read_csv(labelname)
-y_train = y_train['edep'].to_numpy()
-print(' Done')
+   npdata = np.load(filename, allow_pickle=True)['arr_0']
+   npdata[tf.math.is_nan(npdata)] = 0.0
+
+   return (npdata, labeldata)
+
+def get_data_wrapper(filename):
+   # Assuming here that both your data and label is double type
+   features, labels = tf.numpy_function(
+       get_data_from_filename, [filename], (tf.float64, tf.float64)) 
+   return tf.data.Dataset.from_tensor_slices((features, labels))
+
+# Create dataset of filenames.
+ds = tf.data.Dataset.from_tensor_slices(filelist)
+ds = ds.flat_map(get_data_wrapper).prefetch(tf.data.AUTOTUNE).batch(BATCH_SIZE, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
+
 
 #******DEFINE MODEL******#
-BATCH_SIZE = 64
-EPOCHS = 40
-res = ResNetJ(feature="energy", BS=BATCH_SIZE, ndat=x_train.shape[0], nepochs=EPOCHS)
+steps_per_epoch = int(math.ceil(5000*ntrainfiles / BATCH_SIZE))
+print('Inferred steps per epoch:', steps_per_epoch)
+
+res = ResNetJ(feature="energy", epochs=EPOCHS, steps_per_epoch=steps_per_epoch)
 print(res.summary())
 
 #******TENSORBOARD******#
 date_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 log_dir = "logs/" + date_time
-#tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, update_freq=100)
 
 #******TRAIN*******#
 print('Training...')
-history = res.fit(x_train, y_train,
-          batch_size=BATCH_SIZE,
-          epochs=EPOCHS,
-          #callbacks=[tensorboard_callback],
-          validation_split=0.3,
-          shuffle=True)
+history = res.fit(ds,
+                  epochs=EPOCHS,
+                  callbacks=[tensorboard_callback],
+                  shuffle=True)
 
 
 #*****SAVE MODEL******#
-import pickle
-
-
+print('Saving fittet model, its weights and fit history...')
 # save model weights
 res.save_weights('models/res_weights_' + date_time + '.h5')
-with open('models/res_history_' + date_time + '.pkl', 'wb') as f:
+with open('models/res_mod-history_' + date_time + '.pkl', 'wb') as f:
     pickle.dump(history, f)
     pickle.dump(res, f)
+
+print('ALL DONE!')
