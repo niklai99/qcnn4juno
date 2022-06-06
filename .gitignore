@@ -6,6 +6,9 @@ juno_ml-Deepshpere/
 Deepshpere_v*/
 deepsphere/
 
+#except csv
+!data/*.csv
+
 #
 .DS_Store
 
