@@ -89,7 +89,7 @@ def conv1(X, filters = 32 , block="conv1", stage=1):
     X = BatchNormalization(axis=1, name = bn_name_base + '2b')(X)
     X = Activation('relu')(X)
 
-    X = MaxPooling2D((3,3), strides=(1, 1))(X)
+    X = MaxPooling2D((3,3), strides=(2, 2))(X)
     
     return X
 
@@ -152,18 +152,26 @@ class MyLRSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
   def __init__(self, initial_learning_rate, epochs, steps_per_epoch):
     self.initial_learning_rate = initial_learning_rate
+    self.epochs = epochs
     self.steps_per_epoch = steps_per_epoch
     self.m = initial_learning_rate / steps_per_epoch
-    self.decay_rate = (10**-8 / initial_learning_rate)**(((epochs - 1)*steps_per_epoch)**-1)
+    self.decay_rate = tf.constant((10**-8 / initial_learning_rate)**(((epochs - 1)*steps_per_epoch)**-1), dtype=tf.float32)
     print('decay_rate:', self.decay_rate)
 
   def __call__(self, step):
     result = tf.cond(tf.less(step, self.steps_per_epoch), 
                    lambda: self.m * (step+1),
-                   lambda: self.initial_learning_rate * self.decay_rate**(step+1-self.steps_per_epoch))
+                   lambda: self.initial_learning_rate * self.decay_rate**tf.cast(step+1-self.steps_per_epoch, dtype=tf.float32))
 
     tf.print('lr at step', step, 'is', result, output_stream='file://learning_rates.txt')
     return result  
+
+  def get_config(self):
+      return {
+          "initial_learning_rate": self.initial_learning_rate,
+          "epochs": self.epochs,
+          "steps_per_epoch": self.steps_per_epoch
+      }
 
 
 def ResNetJ(feature, epochs, steps_per_epoch, lr_power=-3.0):
@@ -197,10 +205,10 @@ def ResNetJ(feature, epochs, steps_per_epoch, lr_power=-3.0):
     X = conv2x(X, stride=1, filters=[128,512], block="conv4x_3")
     X = conv2x(X, stride=1, filters=[128,512], block="conv4x_4")
     X = conv2x(X, stride=1, filters=[128,512], block="conv4x_5")
-    X = conv2x(X, stride=1, filters=[128,512], block="conv4x_6")
+    #X = conv2x(X, stride=1, filters=[128,512], block="conv4x_6")
 
     # Stage 5
-    X = conv2x(X, stride=2, filters=[256,1024], block="conv5x_1")
+    #X = conv2x(X, stride=2, filters=[256,1024], block="conv5x_1")
     X = conv2x(X, stride=1, filters=[256,1024], block="conv5x_2")
     X = conv2x(X, stride=1, filters=[256,1024], block="conv5x_3")
 
@@ -236,7 +244,7 @@ BATCH_SIZE = 64
 EPOCHS = 15
 
 #*******READ DATA*******#
-ntrainfiles = 1
+ntrainfiles = 115
 
 filelist = glob.glob('../../juno_data/data/projections/*.npz')
 filelist = filelist[:ntrainfiles]
@@ -259,8 +267,9 @@ def get_data_wrapper(filename):
 
 # Create dataset of filenames.
 ds = tf.data.Dataset.from_tensor_slices(filelist)
-ds = ds.flat_map(get_data_wrapper).prefetch(tf.data.AUTOTUNE).batch(BATCH_SIZE, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
-
+ds = ds.flat_map(get_data_wrapper)
+ds = ds.apply(tf.data.experimental.prefetch_to_device("/GPU:0"))
+ds = ds.batch(BATCH_SIZE, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
 
 #******DEFINE MODEL******#
 steps_per_epoch = int(math.ceil(5000*ntrainfiles / BATCH_SIZE))
@@ -269,10 +278,13 @@ print('Inferred steps per epoch:', steps_per_epoch)
 res = ResNetJ(feature="energy", epochs=EPOCHS, steps_per_epoch=steps_per_epoch)
 print(res.summary())
 
-#******TENSORBOARD******#
+#******CALLBACKS******#
+#tensorboard
 date_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 log_dir = "logs/" + date_time
-tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, update_freq=100)
+tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, update_freq=100)
+#earlystopping
+#earlystopping = tf.keras.callbacks.EarlyStopping
 
 #******TRAIN*******#
 print('Training...')
@@ -286,8 +298,8 @@ history = res.fit(ds,
 print('Saving fittet model, its weights and fit history...')
 # save model weights
 res.save_weights('models/res_weights_' + date_time + '.h5')
-with open('models/res_mod-history_' + date_time + '.pkl', 'wb') as f:
+res.save('models/' + date_time)
+with open('models/res_history_' + date_time + '.pkl', 'wb') as f:
     pickle.dump(history, f)
-    pickle.dump(res, f)
 
 print('ALL DONE!')
