@@ -37,7 +37,7 @@ class MyLRSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
                    lambda: self.m * (step+1),
                    lambda: self.initial_learning_rate * self.decay_rate**tf.cast(step+1-self.steps_per_epoch, dtype=tf.float32))
 
-    tf.print('lr at step', step, 'is', result, output_stream='file://learning_rates.txt')
+    #tf.print('lr at step', step, 'is', result, output_stream='file://learning_rates.txt')
     return result  
 
   def get_config(self):
@@ -63,7 +63,21 @@ def gaus(x, a, mu, sigma):
     return a*np.exp( -(x-mu)**2 / (2*sigma**2) )
 
 
-N_FILES = 50
+def get_data_from_filename(filename):
+    # Read the corresponding label file
+
+    npdata = np.load(filename, mmap_mode='r')
+
+    return (npdata)
+
+def get_data_wrapper(filename):
+    # Assuming here that both your data and label is double type
+    features = tf.numpy_function(
+        get_data_from_filename, [filename], tf.float64) 
+    return tf.data.Dataset.from_tensor_slices(features)
+
+
+N_FILES = None
 
 
 energy_list = [0, 0.1, 0.3, 0.6, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -72,14 +86,14 @@ bias_list = []
 err_resolution_list = []
 err_bias_list = []
 print("Loading ResNet...")
-resnet_model = tf.keras.models.load_model("./models/20220603-161936/", custom_objects={'MyLRSchedule': MyLRSchedule})
+resnet_model = tf.keras.models.load_model("./models/20220607-093041/", custom_objects={'MyLRSchedule': MyLRSchedule})
 
 
 for e in energy_list:
     
     print(f"\n\nUsing E = {e} MeV\n\n")
 
-    data_path    = f"../../juno_data/data/projections/test/e+_{e}/"
+    data_path    = f"../../juno_data/data/projections_opt/test/e+_{e}/"
     target_path  = f"../../juno_data/data/real/test/targets/e+_{e}/"
     data_files   = os.listdir(data_path) 
     target_files = os.listdir(target_path) 
@@ -94,13 +108,19 @@ for e in energy_list:
     test_target = test_target[:N_FILES]
     
     print("Reading data...")
-    test_images = np.concatenate([np.load(data_path + file)["arr_0"] for file in tqdm(test_proj)])
-    test_images[np.isnan(test_images)] = 0
+    # Create dataset of filenames.
+    ds = tf.data.Dataset.from_tensor_slices([data_path + file for file in tqdm(test_proj)])
+    # Retrieve .npy files
+    ds = ds.flat_map(get_data_wrapper)
+    # Optimizations
+    ds = ds.apply(tf.data.experimental.prefetch_to_device("/GPU:0"))
+    ds = ds.batch(64, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
+
     print("Reading labels...")
     test_labels = np.concatenate([pd.read_csv(target_path + file)["edep"].to_numpy() for file in tqdm(test_target)])
          
     print("\nStarting prediction:")
-    edep_pred = resnet_model.predict(test_images, verbose=0)
+    edep_pred = resnet_model.predict(ds, verbose=1)
     print(f"Predicted E = {e} MeV\n")
     edep_pred = edep_pred.reshape(edep_pred.shape[0],)
     
@@ -147,10 +167,10 @@ for e in energy_list:
     ax.tick_params(axis="both", which="major", labelsize=14, length=5)
     
     print("Saving plot...")
-    fig.savefig(f"./plots/e_{e}mev_hist_resnet115.png", dpi=300, facecolor="white")
+    fig.savefig(f"./plots/e_{e}mev_hist_resnet1002.png", dpi=300, facecolor="white")
     
 
 print("\n\n\nALL ENERGIES PREDICTED!!")
 results = np.concatenate((resolution_list, err_resolution_list, bias_list, err_bias_list), axis = 1)
 print("\n\nSAVING RESULTS!!")
-np.savetxt("./results/results_resnet115.txt", results, header="res err_res bias err_bias")
+np.savetxt("./results/results_resnet1002.txt", results, header="res err_res bias err_bias")

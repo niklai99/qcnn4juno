@@ -163,7 +163,6 @@ class MyLRSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
                    lambda: self.m * (step+1),
                    lambda: self.initial_learning_rate * self.decay_rate**tf.cast(step+1-self.steps_per_epoch, dtype=tf.float32))
 
-    tf.print('lr at step', step, 'is', result, output_stream='file://learning_rates.txt')
     return result  
 
   def get_config(self):
@@ -250,26 +249,30 @@ filelist = glob.glob('../../juno_data/data/projections/*.npz')
 filelist = filelist[:ntrainfiles]
 print(f'Creating tf.data.Dataset object reading {ntrainfiles} files...')
 def get_data_from_filename(filename):
-   labelfile = '../../juno_data/data/real/train/targets/targets_train_{}.csv'.format(re.findall('\d+', filename.decode())[0])
-   labeldata = pd.read_csv(labelfile)
-   labeldata = labeldata['edep'].to_numpy()
+    # Read the corresponding label file
+    labelfile = '../../juno_data/data/real/train/targets/targets_train_{}.csv'\
+        .format(re.findall('\d+', filename.decode())[0])
+    labeldata = pd.read_csv(labelfile)
+    labeldata = labeldata['edep'].to_numpy()
 
-   npdata = np.load(filename, allow_pickle=True)['arr_0']
-   npdata[tf.math.is_nan(npdata)] = 0.0
+    npdata = np.load(filename, mmap_mode='r')
 
-   return (npdata, labeldata)
+    return (npdata, labeldata)
 
 def get_data_wrapper(filename):
-   # Assuming here that both your data and label is double type
-   features, labels = tf.numpy_function(
-       get_data_from_filename, [filename], (tf.float64, tf.float64)) 
-   return tf.data.Dataset.from_tensor_slices((features, labels))
+    # Assuming here that both your data and label is double type
+    features, labels = tf.numpy_function(
+        get_data_from_filename, [filename], (tf.float64, tf.float64)) 
+    return tf.data.Dataset.from_tensor_slices((features, labels))
 
 # Create dataset of filenames.
 ds = tf.data.Dataset.from_tensor_slices(filelist)
+# Retrieve .npy files
 ds = ds.flat_map(get_data_wrapper)
+# Optimizations
 ds = ds.apply(tf.data.experimental.prefetch_to_device("/GPU:0"))
-ds = ds.batch(BATCH_SIZE, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
+ds = ds.batch(BATCH_SIZE, num_parallel_calls=tf.data.AUTOTUNE, 
+              deterministic=False)
 
 #******DEFINE MODEL******#
 steps_per_epoch = int(math.ceil(5000*ntrainfiles / BATCH_SIZE))
