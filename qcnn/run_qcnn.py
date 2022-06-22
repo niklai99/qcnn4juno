@@ -8,7 +8,6 @@ import sympy
 import numpy as np
 import collections
 import pandas as pd
-import qsimcirq
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -17,6 +16,9 @@ from cirq.contrib.svg import SVGCircuit
 from matplotlib.ticker import ScalarFormatter
 
 from scipy.optimize import curve_fit
+
+physical_devices = tf.config.list_physical_devices("GPU")
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 import tensorflow_quantum as tfq
 
@@ -77,13 +79,29 @@ for i, e in enumerate(energies):
 
 print("Loading train set ...")
 
-mat = np.empty(shape=(0, 57, 31, 2))
-
+#mat = np.empty(shape=(0, 57, 31, 2))
+f=list()
 for file in train_proj:
-    f   = np.load(proj_train_path + '/' + file, mmap_mode='r')
-    mat = np.concatenate((mat, f), axis=0)
+    f.append(np.load(proj_train_path + '/' + file))
+
+mat = np.concatenate(f, axis=0)
 
 train_images = mat
+
+max_time = 0
+max_charge = 0
+
+for image in train_images:
+
+    ev_max_time = np.max(image[:, :, 1])
+    ev_max_charge = np.max(image[:, :, 0])
+    if ev_max_time > max_time:
+        max_time = ev_max_time
+    if ev_max_charge > max_charge:
+        max_charge = ev_max_charge
+
+train_images[:, :, :, 0] = train_images[:, :, :, 0]/max_charge
+train_images[:, :, :, 1] = train_images[:, :, :, 1]/max_time
 
 ## labels
 train_labels = np.empty(shape = (0))
@@ -92,7 +110,8 @@ for i, file in enumerate(train_target):
     train_labels = np.concatenate((train_labels, f), axis=0)
 
 print("done!")
-# test
+
+'''# test
 ## data
 
 print("Loading test set ...")
@@ -102,7 +121,7 @@ test_images = {e:None for e in energies}
 for e in energies:
     f = list()
     for file in test_proj_dict[e]:
-        f.append(np.load(proj_test_path + "/e+_" + e + '/' + file, mmap_mode='r'))
+        f.append(np.load(proj_test_path + "/e+_" + e + '/' + file))
     test_images[e] = np.concatenate(f, axis=0)
     del f
 
@@ -115,7 +134,7 @@ for e in energies:
         test_labels[e] = np.concatenate((test_labels[e], f), axis=0)
 
 
-print("done!")
+print("done!")'''
 
 debug=False
 class QConv(tf.keras.layers.Layer):
@@ -189,7 +208,7 @@ class QConv(tf.keras.layers.Layer):
         self.circuit = full_circuit # save circuit to the QCNN layer obj.
         
         self.params = input_params + self.learning_params
-        self.op = [cirq.Z(cirq_qubits[(i+1)]) for i in range(0, len(cirq_qubits), self.pixels)]                      # measure
+        self.op = [cirq.Z(cirq_qubits[(i)]) for i in range(len(cirq_qubits))]                      # measure
         
     def build(self, input_shape):
         self.width = input_shape[1]
@@ -273,7 +292,7 @@ class QConv(tf.keras.layers.Layer):
                                                operators=self.op)
         del input_data
         # QCNN_output shape: [N*num_x*num_y*channel]
-        QCNN_output = tf.reshape(QCNN_output, shape=[-1, self.num_x, self.num_y, self.channel, self.depth])
+        QCNN_output = tf.reshape(QCNN_output, shape=[-1, self.num_x, self.num_y, self.channel, self.depth*self.pixels])
         return tf.math.reduce_sum(QCNN_output, 3)
 
     @property
@@ -341,7 +360,7 @@ hybrid_qcnn.summary()
 
 print("Starting training ...")
 
-n_epochs   = 20
+n_epochs   = 10
 batch_size = 64
 
 hybrid_qcnn_history = hybrid_qcnn.fit(
